@@ -48,12 +48,13 @@ IMAGE_NAME_AND_VERSION ?= $(REGISTRY)/$(IMG)
 KIND_NAME ?= test-managed
 KIND_NAMESPACE ?= open-cluster-management-agent-addon
 KIND_VERSION ?= latest
-KBVERSION := 2.3.0
 ifneq ($(KIND_VERSION), latest)
 	KIND_ARGS = --image kindest/node:$(KIND_VERSION)
 else
 	KIND_ARGS =
 endif
+# KubeBuilder configuration
+KBVERSION := 2.3.1
 
 LOCAL_OS := $(shell uname)
 ifeq ($(LOCAL_OS),Linux)
@@ -199,7 +200,7 @@ kind-delete-cluster:
 
 install-crds:
 	@echo installing crds
-	kubectl apply -f https://raw.githubusercontent.com/open-cluster-management/governance-policy-propagator/main/deploy/crds/policy.open-cluster-management.io_policies_crd.yaml
+	kubectl apply -f https://raw.githubusercontent.com/open-cluster-management/governance-policy-propagator/main/deploy/crds/policy.open-cluster-management.io_policies.yaml
 
 install-resources:
 	@echo creating namespaces

@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	policiesv1 "github.com/open-cluster-management/governance-policy-propagator/pkg/apis/policy/v1"
 	"github.com/open-cluster-management/governance-policy-propagator/pkg/controller/common"
@@ -150,6 +151,23 @@ func (r *ReconcilePolicy) Reconcile(request reconcile.Request) (reconcile.Result
 				fmt.Sprintf(policyFmtStr, instance.GetNamespace(), object.(metav1.Object).GetName()), mappingErrMsg)
 			continue
 		}
+
+		//reject if not configuration policy and has templates
+		if gvk.Kind != "ConfigurationPolicy" {
+			//if not configuration policies ,do a simple check for templates {{hub and reject
+			//only checking for hub and not {{ as they could be valid cases where they are valid chars.
+			if strings.Contains(string(policyT.ObjectDefinition.Raw), "{{hub ") {
+				templatesErrMsg := fmt.Sprintf("Templates are not supported for kind : %s", gvk.Kind)
+				reqLogger.Error(errors.NewBadRequest(templatesErrMsg), "Failed to process policy template")
+				r.recorder.Event(instance, "Warning", "PolicyTemplateSync", templatesErrMsg)
+				r.recorder.Event(instance, "Warning",
+					fmt.Sprintf(policyFmtStr, instance.GetNamespace(), object.(metav1.Object).GetName()), "NonCompliant; "+templatesErrMsg)
+
+				//continue to the next policy template
+				continue
+			}
+		}
+
 		// fetch resource
 		res := dClient.Resource(rsrc).Namespace(instance.GetNamespace())
 		tName := object.(metav1.Object).GetName()
@@ -205,6 +223,9 @@ func (r *ReconcilePolicy) Reconcile(request reconcile.Request) (reconcile.Result
 				r.recorder.Event(instance, "Normal", "PolicyTemplateSync",
 					fmt.Sprintf("Policy template %s was created successfully", tName))
 
+				// The policy template was created successfully, so requeue for further processing
+				// of the other policy templates
+				return reconcile.Result{Requeue: true}, nil
 			}
 			// other error
 			r.recorder.Event(instance, "Warning", "PolicyTemplateSync",
@@ -229,12 +250,14 @@ func (r *ReconcilePolicy) Reconcile(request reconcile.Request) (reconcile.Result
 		}
 
 		overrideRemediationAction(instance, tObjectUnstructured)
-		// got object, need to compare and update
+		// got object, need to compare both spec and annotation and update
 		eObjectUnstructured := eObject.UnstructuredContent()
-		if !equality.Semantic.DeepEqual(eObjectUnstructured["spec"], tObjectUnstructured.Object["spec"]) {
+		if (!equality.Semantic.DeepEqual(eObjectUnstructured["spec"], tObjectUnstructured.Object["spec"])) ||
+			(!equality.Semantic.DeepEqual(eObject.GetAnnotations(), tObjectUnstructured.GetAnnotations())) {
 			// doesn't match
 			reqLogger.Info("existing object and template don't match, updating...", "PolicyTemplateName", tName)
 			eObjectUnstructured["spec"] = tObjectUnstructured.Object["spec"]
+			eObject.SetAnnotations(tObjectUnstructured.GetAnnotations())
 			_, err = res.Update(context.TODO(), eObject, metav1.UpdateOptions{})
 			if err != nil {
 				reqLogger.Error(err, "Failed to update policy template...", "PolicyTemplateName", tName)
