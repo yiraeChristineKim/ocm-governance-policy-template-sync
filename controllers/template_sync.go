@@ -91,6 +91,22 @@ func (r *PolicyReconciler) Reconcile(ctx context.Context, request reconcile.Requ
 		return reconcile.Result{}, err
 	}
 
+	// Check duplicate names in configuration-policies
+	has, err := hasDupName(instance)
+	if err != nil {
+		reqLogger.Error(err, "Failed to check duplicate configurationpolicy name")
+
+		return reconcile.Result{}, nil
+	}
+
+	if has {
+		msg := "There are duplicate names in configurationpolicies, please check the policy"
+		reqLogger.Info(msg)
+		r.Recorder.Event(instance, "Warning", "ObjectTemplatesHasIdenticalName", msg)
+
+		return reconcile.Result{}, nil
+	}
+
 	var rMapper meta.RESTMapper
 	var dClient dynamic.Interface
 
@@ -341,6 +357,30 @@ func (r *PolicyReconciler) Reconcile(ctx context.Context, request reconcile.Requ
 	reqLogger.Info("Completed the reconciliation")
 
 	return reconcile.Result{}, resultError
+}
+
+// Check duplicate names in policy-templates(configurationPolicies)
+func hasDupName(pol *policiesv1.Policy) (bool, error) {
+	templates := pol.Spec.PolicyTemplates
+
+	empty := make(map[string]struct{})
+
+	for _, v := range templates {
+		unstructured, err := unmarshalFromJSON(v.ObjectDefinition.Raw)
+		if err != nil {
+			return false, err
+		}
+
+		name := unstructured.GetName()
+
+		if _, has := empty[name]; has {
+			return true, nil
+		}
+
+		empty[name] = struct{}{}
+	}
+
+	return false, nil
 }
 
 func overrideRemediationAction(instance *policiesv1.Policy, tObjectUnstructured *unstructured.Unstructured) {
